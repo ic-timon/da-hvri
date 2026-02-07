@@ -6,7 +6,8 @@
 
 [![Go 1.21+](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![AVX-512](https://img.shields.io/badge/AVX--512-超级加速-green)]()
-[![P99](https://img.shields.io/badge/mmap_32并发_P99-13.47ms-blue)]()
+[![QPS](https://img.shields.io/badge/mmap_32并发_QPS-10k+-green)]()
+[![P99](https://img.shields.io/badge/mmap_32并发_P99-11ms-blue)]()
 [![mmap](https://img.shields.io/badge/mmap持久化-QPS_4x+-orange)]()
 
 ---
@@ -23,10 +24,10 @@ DA-HVRI 针对上述痛点进行了系统性优化，在 **50k 向量、32 并�
 
 | 指标 | 数值 |
 |------|------|
-| **P99 延迟** | **13.47 ms**（mmap 单树 32 并发） |
-| **QPS** | **8,923**（mmap 单树 32 并发） |
-| **P99/P50** | **1.73**（长尾极低） |
-| **Goroutine 数** | **17**（稳定，无爆炸） |
+| **QPS** | **10,296**（mmap 单树 32 并发，破万） |
+| **P99 延迟** | **11.00 ms**（mmap 单树 32 并发） |
+| **P99/P50** | **10.51**（单树 Search Pool 限流 + 分段预取） |
+| **Goroutine 数** | **25**（Search Pool worker 常驻，稳定） |
 | **mmap 持久化** | **检索 QPS 约 4x 于纯内存**（块连续布局，cache 友好） |
 
 ---
@@ -56,7 +57,7 @@ DA-HVRI 的核心竞品是 **PQ（Product Quantization）** 与 **HNSW（Hierarc
 | **数据适应性** | 结构随密度自动演化 | 固定码本，分布变化需重训 | 图结构固定，对分布敏感 |
 | **内存占用** | 原始向量 + 质心（可控） | 极低（压缩码） | 较高（图 + 向量） |
 | **查询路径** | 树路由 + 叶子扫描 | 查表 + 残差计算 | 图遍历（多跳） |
-| **并发 P99** | **28.97 ms**（Worker Pool + 本地队列） | 易受锁/调度影响 | 图遍历非确定性，长尾常见 |
+| **并发 P99** | **11.00 ms**（mmap 单树 Search Pool + 分段预取） | 易受锁/调度影响 | 图遍历非确定性，长尾常见 |
 | **Go 生态** | 纯 Go + CGO 可选 | 多为 C++/Python 绑定 | 多为 C++/Rust 绑定 |
 | **嵌入式部署** | 单二进制，无外部依赖 | 需加载预训练码本 | 需加载图结构 |
 
@@ -155,6 +156,11 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 - **本地队列**：每 worker 独立 channel，按 `shardIdx % nWorkers` 路由，消除全局 channel 竞争
 - **物理核亲和**：worker 数 `max(nShards, NumCPU/2)`，规避超线程竞争
 
+### 单树 Search Pool（mmap 限流）
+
+- **SearchPoolWorkers**：mmap 单树高并发下，32 个 goroutine 同时访问同一棵树导致 P99 飙高。配置 `SearchPoolWorkers > 0`（推荐 `NumCPU`）时，启用单树专用 worker 池，将并发度限制在 worker 数，显著降低 P99/P50、提升 QPS
+- **分段式预取**：叶子扫描时由「一次性预取整棵 leaf 所有 block」改为「边用边预取下一个 block」，减少 cache 污染
+
 ---
 
 ## 性能基准
@@ -167,11 +173,11 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 
 | 并发 | QPS | P50(ms) | P99(ms) | P99/P50 |
 |------|-----|---------|---------|---------|
-| 1 | 1,693 | 0.52 | 1.72 | 3.28 |
-| 4 | 4,212 | 1.00 | 2.28 | 2.28 |
-| 8 | 6,435 | 1.00 | 3.89 | 3.89 |
-| 16 | 8,065 | 1.12 | 6.84 | 6.10 |
-| 32 | **8,923** | 1.12 | **13.47** | 12.05 |
+| 1 | 1,706 | 0.52 | 2.00 | 3.82 |
+| 4 | 4,194 | 1.00 | 2.72 | 2.71 |
+| 8 | 7,078 | 1.00 | 3.19 | 3.19 |
+| 16 | 8,965 | 1.01 | 6.47 | 6.42 |
+| 32 | **10,296** | 1.05 | **11.00** | 10.51 |
 
 ### 32 并发压测（50k 向量，16 分片 heap）
 
@@ -200,8 +206,8 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 
 | 模式 | QPS | P50 | P99 | 对比 |
 |------|-----|-----|-----|------|
-| 纯内存 heap | ~1,600 | ~8 ms | ~22 ms | 基准 |
-| **mmap 持久化** | **~7,900** | **~1.1 ms** | **~7.7 ms** | **约 4.9×** |
+| 纯内存 heap | ~1,800 | ~7 ms | ~20 ms | 基准 |
+| **mmap 持久化** | **~7,100** | **~1.2 ms** | **~8 ms** | **约 4×** |
 
 mmap 将块序存储在文件中，检索时顺序访问，CPU 预取与 cache 局部性显著优于 heap 分散分配。服务端推荐 `NewTreeFromFile` 或 `cfg.PersistPath` 默认走 mmap。
 
@@ -278,6 +284,7 @@ CGO_ENABLED=0 go build -o bench ./bench
 | **PruneEpsilon** | 0.1 | 仅进入 `score ≥ maxScore - ε` 的分支 | 0.05 更严格剪枝、0.2 更宽松，一般保持默认 |
 | **UseOffheap** | false | 为 true 时用 C.malloc 分配块，减少 GC | **生产高并发建议 true**（需 CGO） |
 | **PersistPath** | "" | 非空且文件存在时，NewTree 自动从该路径 LoadFrom（mmap） | 服务端加载索引时设置 |
+| **SearchPoolWorkers** | 0 | 单树 search pool worker 数，>0 时启用（mmap 单树高并发限流） | 推荐 `NumCPU`，bench -stage c 单树路径自动启用 |
 
 分片索引推荐：`DefaultConfig()` + `UseOffheap = true` + `nShards = 16`。
 
@@ -290,12 +297,13 @@ cfg.UseOffheap = true  // 生产环境建议开启
 
 // 或自定义
 cfg := &indexer.Config{
-    VectorsPerBlock: 64,   // 每块向量数
-    SplitThreshold:  512,   // 叶子分裂阈值
-    SearchWidth:     3,    // 多路径宽度
-    PruneEpsilon:    0.1,  // 剪枝阈值
-    UseOffheap:      true, // 启用 C.malloc（需 CGO）
-    PersistPath:     "",   // 服务端加载时设置路径，NewTree 自动 mmap
+    VectorsPerBlock:   64,  // 每块向量数
+    SplitThreshold:    512, // 叶子分裂阈值
+    SearchWidth:       3,   // 多路径宽度
+    PruneEpsilon:      0.1, // 剪枝阈值
+    UseOffheap:        true, // 启用 C.malloc（需 CGO）
+    PersistPath:       "",  // 服务端加载时设置路径，NewTree 自动 mmap
+    SearchPoolWorkers: 0,   // mmap 单树高并发时设 NumCPU 限流
 }
 
 // 单树（小规模）
@@ -439,6 +447,7 @@ mmap 为默认加载方式，块在文件中连续存储，检索时 cache 局�
 | PruneEpsilon | 0.1 | 自适应剪枝阈值 |
 | UseOffheap | false | 启用 C.malloc |
 | PersistPath | "" | 服务端加载路径，NewTree 自动 mmap |
+| SearchPoolWorkers | 0 | 单树 search pool worker 数，>0 时启用（mmap 限流） |
 
 ---
 

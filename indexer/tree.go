@@ -10,6 +10,7 @@ type Tree struct {
 	cfg            *Config
 	pool           *Pool
 	root           atomic.Pointer[Node]
+	searchPool     *singleTreeSearchPool
 	persistedStore interface{ Close() error } // set by LoadFrom, used by ClosePersisted
 }
 
@@ -22,6 +23,9 @@ func NewTree(cfg *Config) *Tree {
 	if cfg.PersistPath != "" {
 		if _, err := os.Stat(cfg.PersistPath); err == nil {
 			if err := t.LoadFrom(cfg.PersistPath); err == nil {
+				if cfg.SearchPoolWorkers > 0 {
+					t.searchPool = newSingleTreeSearchPool(t, cfg.SearchPoolWorkers, 64)
+				}
 				return t // mmap tree, pool is nil (read-only)
 			}
 		}
@@ -29,6 +33,9 @@ func NewTree(cfg *Config) *Tree {
 	pool := NewPool(cfg.VectorsPerBlock)
 	pool.UseOffheap = cfg.UseOffheap
 	t.pool = pool
+	if cfg.SearchPoolWorkers > 0 {
+		t.searchPool = newSingleTreeSearchPool(t, cfg.SearchPoolWorkers, 64)
+	}
 	return t
 }
 

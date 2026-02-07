@@ -21,11 +21,15 @@ func alignUp(x, align int64) int64 {
 
 // NewTreeFromFile loads a tree from file (mmap). cfg may be nil to use DefaultConfig().
 // The returned tree is read-only; call ClosePersisted when done.
+// If cfg.SearchPoolWorkers > 0, a single-tree search pool is created for high-concurrency throttling.
 func NewTreeFromFile(path string, cfg *Config) (*Tree, error) {
 	cfg = cfg.OrDefault()
 	t := &Tree{cfg: cfg}
 	if err := t.LoadFrom(path); err != nil {
 		return nil, err
+	}
+	if cfg.SearchPoolWorkers > 0 {
+		t.searchPool = newSingleTreeSearchPool(t, cfg.SearchPoolWorkers, 64)
 	}
 	return t, nil
 }
@@ -280,8 +284,12 @@ func (t *Tree) LoadFrom(path string) error {
 	return nil
 }
 
-// ClosePersisted releases the mmap for a tree loaded via LoadFrom. No-op if not loaded from file.
+// ClosePersisted releases the search pool (if any) and mmap for a tree loaded via LoadFrom. No-op if not loaded from file.
 func (t *Tree) ClosePersisted() error {
+	if t.searchPool != nil {
+		t.searchPool.Close()
+		t.searchPool = nil
+	}
 	if t.persistedStore != nil {
 		err := t.persistedStore.Close()
 		t.persistedStore = nil

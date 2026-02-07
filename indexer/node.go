@@ -95,15 +95,14 @@ func (n *LeafNode) scanAndTopK(query []float32, k int) []SearchResult {
 		return nil
 	}
 	vpb := n.cfg.VectorsPerBlock
-	// Prefetch: touch each block to trigger page load (for mmap-backed blocks)
-	for _, b := range n.blocks {
-		if d := b.Data(); len(d) > 0 {
-			_ = d[0]
-		}
-	}
 	scores := make([]float64, n.vectorCount)
 	offset := 0
-	for _, b := range n.blocks {
+	for bi, b := range n.blocks {
+		if bi+1 < len(n.blocks) {
+			if d := n.blocks[bi+1].Data(); len(d) > 0 {
+				_ = d[0]
+			}
+		}
 		nInBlock := vpb
 		if offset+nInBlock > n.vectorCount {
 			nInBlock = n.vectorCount - offset

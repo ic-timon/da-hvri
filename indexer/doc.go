@@ -11,7 +11,8 @@
 //	idx.Add(vec, chunkID)
 //	results := idx.SearchMultiPath(queryVec, k)
 //
-// Load from file (mmap, recommended for serving):
+// Load from file (mmap, recommended for serving). Set cfg.SearchPoolWorkers =
+// runtime.NumCPU() for high-concurrency throttling.
 //
 //	tree, err := indexer.NewTreeFromFile("/path/to/index.bin", cfg)
 //	if err != nil { ... }

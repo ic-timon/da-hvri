@@ -12,6 +12,14 @@ func (t *Tree) SearchMultiPath(query []float32, k int) []SearchResult {
 	if len(query) != BlockDim || k <= 0 {
 		return nil
 	}
+	if t.searchPool != nil {
+		return t.searchPool.Search(query, k)
+	}
+	return t.searchMultiPathImpl(query, k)
+}
+
+// searchMultiPathImpl 内部实现，供 searchPool worker 调用（避免递归进 pool 死锁）
+func (t *Tree) searchMultiPathImpl(query []float32, k int) []SearchResult {
 	root := t.root.Load()
 	if root == nil {
 		return nil

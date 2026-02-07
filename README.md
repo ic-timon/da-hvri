@@ -6,7 +6,8 @@
 
 [![Go 1.21+](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![AVX-512](https://img.shields.io/badge/AVX--512-Accelerated-green)]()
-[![P99](https://img.shields.io/badge/mmap_32concurrent_P99-13.47ms-blue)]()
+[![QPS](https://img.shields.io/badge/mmap_32concurrent_QPS-10k+-green)]()
+[![P99](https://img.shields.io/badge/mmap_32concurrent_P99-11ms-blue)]()
 [![mmap](https://img.shields.io/badge/mmap_persist-QPS_4x+-orange)]()
 
 ---
@@ -23,10 +24,10 @@ DA-HVRI addresses these with systematic optimizations. At **50k vectors, 32 conc
 
 | Metric | Value |
 |--------|-------|
-| **P99 latency** | **13.47 ms** (mmap single tree, 32 concurrent) |
-| **QPS** | **8,923** (mmap single tree, 32 concurrent) |
-| **P99/P50** | **1.73** (low tail) |
-| **Goroutine count** | **17** (stable, no explosion) |
+| **QPS** | **10,296** (mmap single tree, 32 concurrent, 10k+) |
+| **P99 latency** | **11.00 ms** (mmap single tree, 32 concurrent) |
+| **P99/P50** | **10.51** (single-tree Search Pool + segmented prefetch) |
+| **Goroutine count** | **25** (Search Pool workers, stable) |
 | **mmap persist** | **~4× search QPS vs heap** (contiguous blocks, cache-friendly) |
 
 ---
@@ -56,7 +57,7 @@ DA-HVRI competes with **PQ (Product Quantization)** and **HNSW (Hierarchical Nav
 | **Data adaptivity** | Structure evolves with density | Fixed codebook, retrain on distribution shift | Fixed graph, sensitive to distribution |
 | **Memory** | Raw vectors + centroids (tunable) | Very low (compressed codes) | Higher (graph + vectors) |
 | **Query path** | Tree routing + leaf scan | Table lookup + residual | Graph traversal (multi-hop) |
-| **Concurrent P99** | **28.97 ms** (Worker Pool + local queues) | Affected by locks/scheduling | Non-deterministic traversal, common tail |
+| **Concurrent P99** | **11.00 ms** (mmap single-tree Search Pool + segmented prefetch) | Affected by locks/scheduling | Non-deterministic traversal, common tail |
 | **Go ecosystem** | Pure Go + optional CGO | Mostly C++/Python bindings | Mostly C++/Rust bindings |
 | **Embedded** | Single binary, no external deps | Needs pretrained codebook | Needs graph structure |
 
@@ -155,6 +156,11 @@ Structure adapts to density: sparse regions stay shallow, dense regions split in
 - **Local queues**: Per-worker channels, route by `shardIdx % nWorkers` to avoid global contention
 - **Physical core affinity**: Worker count `max(nShards, NumCPU/2)` to avoid hyperthread contention
 
+### Single-tree Search Pool (mmap throttling)
+
+- **SearchPoolWorkers**: Under high concurrency on mmap single tree, 32 goroutines hitting the same tree spike P99. Set `SearchPoolWorkers > 0` (recommended `NumCPU`) to enable a dedicated worker pool that caps concurrency, lowering P99/P50 and boosting QPS
+- **Segmented prefetch**: Leaf scan changed from "prefetch all blocks at once" to "prefetch next block while processing current", reducing cache pollution
+
 ---
 
 ## Performance Benchmarks
@@ -167,11 +173,11 @@ Run: `go run ./bench -stage c -offheap`
 
 | Concurrency | QPS | P50(ms) | P99(ms) | P99/P50 |
 |-------------|-----|---------|---------|---------|
-| 1 | 1,693 | 0.52 | 1.72 | 3.28 |
-| 4 | 4,212 | 1.00 | 2.28 | 2.28 |
-| 8 | 6,435 | 1.00 | 3.89 | 3.89 |
-| 16 | 8,065 | 1.12 | 6.84 | 6.10 |
-| 32 | **8,923** | 1.12 | **13.47** | 12.05 |
+| 1 | 1,706 | 0.52 | 2.00 | 3.82 |
+| 4 | 4,194 | 1.00 | 2.72 | 2.71 |
+| 8 | 7,078 | 1.00 | 3.19 | 3.19 |
+| 16 | 8,965 | 1.01 | 6.47 | 6.42 |
+| 32 | **10,296** | 1.05 | **11.00** | 10.51 |
 
 ### 32-concurrent (50k vectors, 16 shards heap)
 
@@ -214,8 +220,8 @@ Run: `go run ./bench -stage d`
 
 | Mode | QPS | P50 | P99 | Ratio |
 |------|-----|-----|-----|-------|
-| Heap | ~1,600 | ~8 ms | ~22 ms | baseline |
-| **mmap persist** | **~7,900** | **~1.1 ms** | **~7.7 ms** | **~4.9×** |
+| Heap | ~1,800 | ~7 ms | ~20 ms | baseline |
+| **mmap persist** | **~7,100** | **~1.2 ms** | **~8 ms** | **~4×** |
 
 mmap stores blocks contiguously in the file; sequential access improves CPU prefetch and cache locality over heap-scattered blocks. Use `NewTreeFromFile` or `cfg.PersistPath` for serving.
 
@@ -288,6 +294,7 @@ Sharded index routes vectors by `chunkID % nShards` to 16 trees; search queries 
 | **PruneEpsilon** | 0.1 | only enter branches with `score ≥ maxScore - ε` | 0.05: stricter; 0.2: looser |
 | **UseOffheap** | false | use C.malloc for blocks | **Set true for production** (requires CGO) |
 | **PersistPath** | "" | when non-empty and file exists, NewTree auto LoadFrom (mmap) | set when loading index for serving |
+| **SearchPoolWorkers** | 0 | single-tree search pool worker count; enabled when >0 (mmap single-tree throttling) | recommended `NumCPU`; bench -stage c single-tree path auto-enables |
 
 Recommended: `DefaultConfig()` + `UseOffheap = true` + `nShards = 16`.
 
@@ -304,8 +311,9 @@ cfg := &indexer.Config{
     SplitThreshold:  512,
     SearchWidth:     3,
     PruneEpsilon:    0.1,
-    UseOffheap:      true,
-    PersistPath:     "",   // set path for serving; NewTree auto mmap when file exists
+    UseOffheap:        true,
+    PersistPath:       "",  // set path for serving; NewTree auto mmap when file exists
+    SearchPoolWorkers: 0,   // set NumCPU for mmap single-tree high-concurrency throttling
 }
 
 // Single tree
@@ -449,6 +457,7 @@ mmap is the default load path; blocks are contiguous in the file for better cach
 | PruneEpsilon | 0.1 | Adaptive pruning threshold |
 | UseOffheap | false | Enable C.malloc |
 | PersistPath | "" | Serving load path; NewTree auto mmap |
+| SearchPoolWorkers | 0 | Single-tree search pool workers; enabled when >0 (mmap throttling) |
 
 ---
 

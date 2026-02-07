@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -44,7 +45,8 @@ func runStageC(opts stageOpts) {
 	fmt.Printf("  构建耗时 %.0fms\n", float64(time.Since(t0).Nanoseconds())/1e6)
 
 	if useMmap {
-		// 单树：持久化 -> mmap 加载
+		// 单树：持久化 -> mmap 加载，启用 SearchPool 限流
+		cfg.SearchPoolWorkers = runtime.NumCPU()
 		tree := idx.(*indexer.Tree)
 		tmpPath := filepath.Join(os.TempDir(), "da-hvri-stage-c-index.bin")
 		if err := tree.SaveToAtomic(tmpPath); err != nil {

@@ -2,12 +2,13 @@ package indexer
 
 // Config holds index parameters.
 type Config struct {
-	VectorsPerBlock int     // vectors per block, default 64
-	SplitThreshold  int     // leaf split threshold, default 512
-	SearchWidth     int     // multi-path search width, default 3
-	PruneEpsilon    float64 // prune branches with score < maxScore - epsilon, default 0.1
-	UseOffheap      bool    // use C.malloc for blocks (requires CGO), reduces GC pressure
-	PersistPath     string  // non-empty and file exists: NewTree auto LoadFrom (mmap); read-only tree
+	VectorsPerBlock   int     // vectors per block, default 64
+	SplitThreshold    int     // leaf split threshold, default 512
+	SearchWidth       int     // multi-path search width, default 3
+	PruneEpsilon      float64 // prune branches with score < maxScore - epsilon, default 0.1
+	UseOffheap        bool    // use C.malloc for blocks (requires CGO), reduces GC pressure
+	PersistPath       string  // non-empty and file exists: NewTree auto LoadFrom (mmap); read-only tree
+	SearchPoolWorkers int     // when >0, enables single-tree search pool (recommend NumCPU) for mmap throttling
 }
 
 // DefaultConfig returns the default configuration.
