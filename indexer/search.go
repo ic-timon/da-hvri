@@ -5,7 +5,9 @@ import (
 	"container/heap"
 )
 
-// SearchMultiPath performs multi-path search: at each level selects Top-SearchWidth children (or adaptive pruning by PruneEpsilon), deduplicates at leaves, and merges Top-K.
+// SearchMultiPath performs multi-path search: at each level selects Top-SearchWidth
+// children (or adaptive pruning by PruneEpsilon), deduplicates at leaves, and merges Top-K.
+// Higher recall than Search; use for production.
 func (t *Tree) SearchMultiPath(query []float32, k int) []SearchResult {
 	if len(query) != BlockDim || k <= 0 {
 		return nil

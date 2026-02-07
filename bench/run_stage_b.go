@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/ic-timon/da-hvri/bench/gen"
@@ -22,10 +24,15 @@ func runStageB(opts stageOpts) {
 	scales := []int{10_000, 50_000, 100_000, 200_000}
 	cfg := indexer.DefaultConfig()
 	cfg.UseOffheap = opts.offheap
+	// useMmap 时用 heap 构建（SaveTo 与 offheap 有兼容问题）
+	useMmap := opts.shards == 1
+	if useMmap {
+		cfg.UseOffheap = false
+	}
 
 	var rows []metrics.StageBRow
 	for _, n := range scales {
-		fmt.Printf("阶段 B: 向量规模 %d shards=%d offheap=%v\n", n, opts.shards, opts.offheap)
+		fmt.Printf("阶段 B: 向量规模 %d shards=%d mmap=%v\n", n, opts.shards, useMmap)
 
 		vecs := gen.RandomVectors(n+1, dim, int64(n))
 		query := vecs[n]
@@ -49,13 +56,39 @@ func runStageB(opts stageOpts) {
 		}
 		buildDur := time.Since(t0)
 
-		durations := make([]time.Duration, searchRuns)
-		for i := 0; i < searchRuns; i++ {
-			t1 := time.Now()
-			idx.SearchMultiPath(query, topK)
-			durations[i] = time.Since(t1)
+		var stats metrics.LatencyStats
+		if useMmap {
+			// 单树：持久化 -> mmap 加载 -> 检索
+			tree := idx.(*indexer.Tree)
+			tmp := filepath.Join(os.TempDir(), fmt.Sprintf("da-hvri-stage-b-%d.bin", n))
+			if err := tree.SaveToAtomic(tmp); err != nil {
+				panic(err)
+			}
+			treeMmap, err := indexer.NewTreeFromFile(tmp, cfg)
+			if err != nil {
+				panic(err)
+			}
+			idx = treeMmap
+
+			durations := make([]time.Duration, searchRuns)
+			for i := 0; i < searchRuns; i++ {
+				t1 := time.Now()
+				idx.SearchMultiPath(query, topK)
+				durations[i] = time.Since(t1)
+			}
+			stats = metrics.LatencyStatsFromDurations(durations)
+
+			treeMmap.ClosePersisted()
+			_ = os.Remove(tmp)
+		} else {
+			durations := make([]time.Duration, searchRuns)
+			for i := 0; i < searchRuns; i++ {
+				t1 := time.Now()
+				idx.SearchMultiPath(query, topK)
+				durations[i] = time.Since(t1)
+			}
+			stats = metrics.LatencyStatsFromDurations(durations)
 		}
-		stats := metrics.LatencyStatsFromDurations(durations)
 
 		metrics.GC()
 		after := metrics.Take()

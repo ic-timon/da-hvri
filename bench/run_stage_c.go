@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -24,13 +26,15 @@ func runStageC(opts stageOpts) {
 
 	cfg := indexer.DefaultConfig()
 	cfg.UseOffheap = opts.offheap
+	useMmap := opts.shards == 1
+
 	var idx indexerSearcher
 	if opts.shards > 1 {
 		idx = indexer.NewShardedIndex(cfg, opts.shards)
 	} else {
 		idx = indexer.NewTree(cfg)
 	}
-	fmt.Printf("阶段 C: 构建 %d 向量索引 shards=%d offheap=%v...\n", vectorCount, opts.shards, opts.offheap)
+	fmt.Printf("阶段 C: 构建 %d 向量索引 shards=%d offheap=%v mmap=%v...\n", vectorCount, opts.shards, opts.offheap, useMmap)
 	t0 := time.Now()
 	for i, v := range vecs {
 		if !idx.Add(v, uint64(i)) {
@@ -38,6 +42,24 @@ func runStageC(opts stageOpts) {
 		}
 	}
 	fmt.Printf("  构建耗时 %.0fms\n", float64(time.Since(t0).Nanoseconds())/1e6)
+
+	if useMmap {
+		// 单树：持久化 -> mmap 加载
+		tree := idx.(*indexer.Tree)
+		tmpPath := filepath.Join(os.TempDir(), "da-hvri-stage-c-index.bin")
+		if err := tree.SaveToAtomic(tmpPath); err != nil {
+			panic(err)
+		}
+		treeMmap, err := indexer.NewTreeFromFile(tmpPath, cfg)
+		if err != nil {
+			panic(err)
+		}
+		idx = treeMmap
+		defer func() {
+			treeMmap.ClosePersisted()
+			_ = os.Remove(tmpPath)
+		}()
+	}
 
 	var rows []metrics.StageCRow
 	for _, concurrency := range concurrencies {

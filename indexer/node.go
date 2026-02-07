@@ -83,10 +83,10 @@ func (n *LeafNode) updateCentroid() {
 	}
 }
 
-// SearchResult holds a search result.
+// SearchResult holds a single search result returned by Search or SearchMultiPath.
 type SearchResult struct {
-	ChunkID uint64  // chunk identifier from Add
-	Score   float64 // cosine similarity (dot product for L2-normalized vectors)
+	ChunkID uint64  // Chunk identifier passed to Add; returned as-is for lookup
+	Score   float64 // Cosine similarity (dot product when vectors are L2-normalized)
 }
 
 // scanAndTopK 扫描块内向量，返回 Top-K 的 (chunkID, score)
@@ -95,6 +95,12 @@ func (n *LeafNode) scanAndTopK(query []float32, k int) []SearchResult {
 		return nil
 	}
 	vpb := n.cfg.VectorsPerBlock
+	// Prefetch: touch each block to trigger page load (for mmap-backed blocks)
+	for _, b := range n.blocks {
+		if d := b.Data(); len(d) > 0 {
+			_ = d[0]
+		}
+	}
 	scores := make([]float64, n.vectorCount)
 	offset := 0
 	for _, b := range n.blocks {

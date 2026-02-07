@@ -7,6 +7,7 @@ type Config struct {
 	SearchWidth     int     // multi-path search width, default 3
 	PruneEpsilon    float64 // prune branches with score < maxScore - epsilon, default 0.1
 	UseOffheap      bool    // use C.malloc for blocks (requires CGO), reduces GC pressure
+	PersistPath     string  // non-empty and file exists: NewTree auto LoadFrom (mmap); read-only tree
 }
 
 // DefaultConfig returns the default configuration.

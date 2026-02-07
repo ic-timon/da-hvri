@@ -7,7 +7,8 @@ const (
 	BlockDim = 512
 )
 
-// Block is the block interface, supporting both heap and off-heap implementations.
+// Block is the block interface for storing vectors. Supports heap (DataBlock),
+// off-heap (DataBlockOffheap), and mmap-backed (DataBlockMmap) implementations.
 type Block interface {
 	VectorsPerBlock() int
 	FloatsPerBlock() int

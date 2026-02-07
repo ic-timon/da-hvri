@@ -48,7 +48,33 @@ func BenchmarkDotProduct_Auto(b *testing.B) {
 	}
 }
 
-// 模拟 semanticChunk 中约 3365 次点积调用的耗时
+// BenchmarkDotProductBatchFlat_Go benchmarks the pure Go batch implementation.
+func BenchmarkDotProductBatchFlat_Go(b *testing.B) {
+	va, vb := initBenchVectors()
+	data := make([]float32, 64*dim)
+	for i := 0; i < 64; i++ {
+		copy(data[i*dim:(i+1)*dim], va)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = dotProductBatchFlatGo(vb, data, 64)
+	}
+}
+
+// BenchmarkDotProductBatchFlat_Auto benchmarks the auto-dispatched batch implementation.
+func BenchmarkDotProductBatchFlat_Auto(b *testing.B) {
+	va, vb := initBenchVectors()
+	data := make([]float32, 64*dim)
+	for i := 0; i < 64; i++ {
+		copy(data[i*dim:(i+1)*dim], va)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = DotProductBatchFlat(vb, data, 64)
+	}
+}
+
+// BenchmarkSemanticChunkSim_Go benchmarks ~3365 dot products (simulated semantic chunk).
 func BenchmarkSemanticChunkSim_Go(b *testing.B) {
 	va, vb := initBenchVectors()
 	n := 3365 // 红楼梦段落数

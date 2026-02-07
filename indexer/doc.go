@@ -1,6 +1,9 @@
 // Package indexer provides the density-adaptive hierarchical vector routing index (DA-HVRI).
 //
-// Quick start:
+// Vectors must be 512-dimensional and L2-normalized. Use ShardedIndex for
+// medium-to-large scale; use Tree for single-tree or small scale.
+//
+// Quick start (build and search):
 //
 //	cfg := indexer.DefaultConfig()
 //	cfg.UseOffheap = true
@@ -8,4 +11,12 @@
 //	idx.Add(vec, chunkID)
 //	results := idx.SearchMultiPath(queryVec, k)
 //
+// Load from file (mmap, recommended for serving):
+//
+//	tree, err := indexer.NewTreeFromFile("/path/to/index.bin", cfg)
+//	if err != nil { ... }
+//	defer tree.ClosePersisted()
+//	results := tree.SearchMultiPath(queryVec, k)
+//
+// Persistence: SaveToAtomic, LoadFrom, AppendTo. See Tree and NewTreeFromFile.
 package indexer

@@ -45,10 +45,7 @@ import "C"
 
 import "unsafe"
 
-const Dim = 512 // Vector dimension (512).
-
-// DotProductBatchFlat computes dot products of n vectors with query (AVX-512 with prefetch). Layout: data[i*Dim:(i+1)*Dim] is the i-th vector.
-func DotProductBatchFlat(query []float32, data []float32, n int) []float64 {
+func dotProductBatchFlatAVX512(query []float32, data []float32, n int) []float64 {
 	if len(query) != Dim || n <= 0 || len(data) < n*Dim {
 		return nil
 	}

@@ -49,7 +49,7 @@ func runStageA() {
 			}
 			buildDur := time.Since(t0)
 
-			// 搜索延迟统计
+			// 搜索延迟统计（阶段 A 为参数寻优，使用 heap）
 			durations := make([]time.Duration, searchRuns)
 			for i := 0; i < searchRuns; i++ {
 				t1 := time.Now()

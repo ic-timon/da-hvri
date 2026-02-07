@@ -1,25 +1,35 @@
 package indexer
 
 import (
+	"os"
 	"sync/atomic"
 )
 
 // Tree is a dynamic descending tree supporting single-path search.
 type Tree struct {
-	cfg  *Config
-	pool *Pool
-	root atomic.Pointer[Node]
+	cfg            *Config
+	pool           *Pool
+	root           atomic.Pointer[Node]
+	persistedStore interface{ Close() error } // set by LoadFrom, used by ClosePersisted
 }
 
-// NewTree creates an empty tree. Uses default config if cfg is nil.
+// NewTree creates a tree. Uses default config if cfg is nil.
+// If cfg.PersistPath is non-empty and the file exists, loads from file (mmap, read-only).
+// Otherwise creates an empty heap tree for Add.
 func NewTree(cfg *Config) *Tree {
 	cfg = cfg.OrDefault()
+	t := &Tree{cfg: cfg}
+	if cfg.PersistPath != "" {
+		if _, err := os.Stat(cfg.PersistPath); err == nil {
+			if err := t.LoadFrom(cfg.PersistPath); err == nil {
+				return t // mmap tree, pool is nil (read-only)
+			}
+		}
+	}
 	pool := NewPool(cfg.VectorsPerBlock)
 	pool.UseOffheap = cfg.UseOffheap
-	return &Tree{
-		cfg:  cfg,
-		pool: pool,
-	}
+	t.pool = pool
+	return t
 }
 
 // Config returns the current configuration.
@@ -28,8 +38,9 @@ func (t *Tree) Config() *Config {
 }
 
 // Add inserts a vector. chunkID is the external chunk identifier.
+// Returns false if tree is read-only (loaded via PersistPath/LoadFrom).
 func (t *Tree) Add(vec []float32, chunkID uint64) bool {
-	if len(vec) != BlockDim {
+	if t.pool == nil || len(vec) != BlockDim {
 		return false
 	}
 	root := t.root.Load()
@@ -116,6 +127,7 @@ func (t *Tree) replaceInSlot(slot *atomic.Pointer[Node], old *LeafNode, newInter
 }
 
 // Search performs single-path search and returns Top-K results.
+// Lowest latency; use SearchMultiPath for higher recall.
 func (t *Tree) Search(query []float32, k int) []SearchResult {
 	if len(query) != BlockDim || k <= 0 {
 		return nil
