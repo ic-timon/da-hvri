@@ -105,4 +105,3 @@ func kMeans2(vectors [][]float32, rounds int) []int {
 	}
 	return assign
 }
-

@@ -15,11 +15,11 @@ type Node interface {
 
 // LeafNode is a leaf node holding Blocks, up to SplitThreshold vectors.
 type LeafNode struct {
-	cfg          *Config
-	blocks       []Block
-	ids          []uint64
-	centroid     []float32
-	vectorCount  int
+	cfg         *Config
+	blocks      []Block
+	ids         []uint64
+	centroid    []float32
+	vectorCount int
 }
 
 // NewLeafNode creates an empty leaf node.

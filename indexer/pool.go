@@ -7,10 +7,10 @@ import (
 
 // Pool is a memory pool that pre-allocates Blocks (heap or off-heap).
 type Pool struct {
-	mu               sync.Mutex
-	blocks           []Block
-	vectorsPerBlock  int
-	UseOffheap       bool // when true and CGO available, use C.malloc
+	mu              sync.Mutex
+	blocks          []Block
+	vectorsPerBlock int
+	UseOffheap      bool // when true and CGO available, use C.malloc
 }
 
 // NewPool creates a memory pool. vectorsPerBlock determines vectors per block.

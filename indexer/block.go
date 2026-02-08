@@ -21,8 +21,8 @@ type Block interface {
 
 // DataBlock stores N vectors of 512 dimensions in heap memory. Layout: [v0_0..v0_511, v1_0..v1_511, ...]
 type DataBlock struct {
-	data             []float32
-	vectorsPerBlock  int
+	data            []float32
+	vectorsPerBlock int
 }
 
 // NewDataBlock creates a new block. vectorsPerBlock determines the number of vectors per block.

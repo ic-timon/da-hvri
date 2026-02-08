@@ -35,20 +35,20 @@ const maxBatchSize = 16
 
 // workerBufs holds per-worker reusable buffers to avoid cross-core sharing.
 type workerBufs struct {
-	scores      []float64
-	indices     []int
-	seen        seenSlice
-	seenBatch   []seenSlice // for batch mode
-	batchScores [][]float64  // batchScores[q] for query q in leaf
+	scores       []float64
+	indices      []int
+	seen         seenSlice
+	seenBatch    []seenSlice // for batch mode
+	batchScores  [][]float64 // batchScores[q] for query q in leaf
 	batchIndices [][]int     // batchIndices[q] for query q in leaf
 }
 
 func newWorkerBufs() *workerBufs {
 	return &workerBufs{
-		scores:      make([]float64, 0, scoresBufCap),
-		indices:     make([]int, 0, indicesBufCap),
-		seen:        make(seenSlice, 0, seenBufCap),
-		seenBatch:   make([]seenSlice, 0, maxBatchSize),
+		scores:       make([]float64, 0, scoresBufCap),
+		indices:      make([]int, 0, indicesBufCap),
+		seen:         make(seenSlice, 0, seenBufCap),
+		seenBatch:    make([]seenSlice, 0, maxBatchSize),
 		batchScores:  make([][]float64, 0, maxBatchSize),
 		batchIndices: make([][]int, 0, maxBatchSize),
 	}

@@ -7,9 +7,9 @@ import (
 
 // DataBlockMmap is a Block backed by mmap'd file region (read-only).
 type DataBlockMmap struct {
-	store            store.BlockStore
-	offset           int64
-	vectorsPerBlock  int
+	store           store.BlockStore
+	offset          int64
+	vectorsPerBlock int
 }
 
 // NewDataBlockMmap creates a block view from the store at the given offset.

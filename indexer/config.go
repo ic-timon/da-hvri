@@ -16,7 +16,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		VectorsPerBlock: 64,
 		SplitThreshold:  512,
-		SearchWidth:      3,
+		SearchWidth:     3,
 		PruneEpsilon:    0.1,
 	}
 }

@@ -42,13 +42,13 @@ type StageBRow struct {
 
 // StageCRow 阶段 C 单行数据
 type StageCRow struct {
-	Concurrency   int
-	VectorCount   int
-	QPS           float64
-	SearchP50Ms   float64
-	SearchP99Ms   float64
-	NumGoroutine  int
-	P99P50Ratio   float64
+	Concurrency  int
+	VectorCount  int
+	QPS          float64
+	SearchP50Ms  float64
+	SearchP99Ms  float64
+	NumGoroutine int
+	P99P50Ratio  float64
 }
 
 // Percentile 计算切片中第 p 百分位（0-100），输入需已排序
