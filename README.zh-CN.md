@@ -165,9 +165,11 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 
 ## 性能基准
 
+### Windows（x86_64 AVX-512）
+
 **环境**：Windows / Go 1.21 / 512 维向量
 
-### 32 并发压测（50k 向量，mmap 单树，推荐）
+#### 32 并发压测（50k 向量，mmap 单树，推荐）
 
 压测命令：`go run ./bench -stage c -offheap`
 
@@ -179,7 +181,7 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 | 16 | 8,965 | 1.01 | 6.47 | 6.42 |
 | 32 | **10,296** | 1.05 | **11.00** | 10.51 |
 
-### 32 并发压测（50k 向量，16 分片 heap）
+#### 32 并发压测（50k 向量，16 分片 heap）
 
 压测命令：`go run ./bench -stage c -shards 16 -offheap`
 
@@ -191,7 +193,7 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 | 16 | 1,439 | 10.88 | 19.22 | 1.77 |
 | 32 | 1,911 | 16.76 | 25.69 | 1.53 |
 
-### 容量扩展（100k / 200k 向量，mmap）
+#### 容量扩展（100k / 200k 向量，mmap）
 
 压测命令：`go run ./bench -stage b`
 
@@ -200,7 +202,7 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 | 100k | ~0 ms | ~0.6 ms | ~700 MB |
 | 200k | ~0.5 ms | ~1.6 ms | ~2.8 GB |
 
-### 纯内存 vs mmap 持久化（stage d）
+#### 纯内存 vs mmap 持久化（stage d）
 
 压测命令：`go run ./bench -stage d`
 
@@ -211,9 +213,57 @@ DA-HVRI 的核心数据结构，索引结构随数据密度自动演化，无需
 
 mmap 将块序存储在文件中，检索时顺序访问，CPU 预取与 cache 局部性显著优于 heap 分散分配。服务端推荐 `NewTreeFromFile` 或 `cfg.PersistPath` 默认走 mmap。
 
-### CGO 与 无 CGO 对比
+#### CGO 与 无 CGO 对比
 
 无 CGO 时回退到纯 Go 点积与堆内存；CGO 启用 AVX-512 与 Off-heap，QPS 约可提升 1.9 倍。无 CGO 时仍可正常编译运行，适合无 GCC 或交叉编译场景。
+
+---
+
+### Mac（Apple Silicon ARM64 NEON）
+
+**环境**：macOS / Go 1.21 / 512 维向量（Apple Silicon）
+
+#### 32 并发压测（50k 向量，mmap 单树，推荐）
+
+压测命令：`go run ./bench -stage c -offheap`
+
+| 并发 | QPS | P50(ms) | P99(ms) | P99/P50 |
+|------|-----|---------|---------|---------|
+| 1 | 1,965 | 0.47 | 1.23 | 2.59 |
+| 4 | 4,316 | 0.83 | 2.14 | 2.57 |
+| 8 | 5,831 | 1.14 | 4.05 | 3.55 |
+| 16 | 5,985 | 1.40 | 15.97 | 11.42 |
+| 32 | **6,069** | 2.52 | **19.96** | 7.91 |
+
+#### 32 并发压测（50k 向量，16 分片 heap）
+
+压测命令：`go run ./bench -stage c -shards 16 -offheap`
+
+| 并发 | QPS | P50(ms) | P99(ms) | P99/P50 |
+|------|-----|---------|---------|---------|
+| 1 | 819 | 1.15 | 2.02 | 1.76 |
+| 4 | 942 | 4.08 | 6.99 | 1.71 |
+| 8 | 976 | 8.01 | 13.48 | 1.68 |
+| 16 | 924 | 16.51 | 36.86 | 2.23 |
+| 32 | 1,040 | 30.36 | 50.98 | 1.68 |
+
+#### 容量扩展（100k / 200k 向量，mmap）
+
+压测命令：`go run ./bench -stage b`
+
+| 规模 | 搜索 P50 | 搜索 P99 | HeapSys |
+|------|----------|----------|---------|
+| 100k | ~0.2 ms | ~0.3 ms | ~1.4 GB |
+| 200k | ~1.3 ms | ~2.5 ms | ~2.8 GB |
+
+#### 纯内存 vs mmap 持久化（stage d）
+
+压测命令：`go run ./bench -stage d`
+
+| 模式 | QPS | P50 | P99 | 对比 |
+|------|-----|-----|-----|------|
+| 纯内存 heap | ~1,015 | ~11.5 ms | ~67 ms | 基准 |
+| **mmap 持久化** | **~5,114** | **~1.5 ms** | **~21 ms** | **约 5×** |
 
 ---
 
@@ -255,6 +305,18 @@ CGO_ENABLED=0 go build -o bench ./bench
 # 压测（stage: a|b|c|d）
 ./bench -stage c -shards 16 -offheap
 ./bench -stage d   # 对比 mmap 与纯内存检索性能
+```
+
+**macOS（Apple Silicon）**
+
+```bash
+# 启用 CGO（ARM64 NEON 加速）
+CGO_ENABLED=1 go build -o bench ./bench
+
+# 压测（stage: a|b|c|d）
+./bench -stage c -offheap     # mmap 单树
+./bench -stage c -shards 16 -offheap
+./bench -stage d
 ```
 
 ---

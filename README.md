@@ -165,9 +165,11 @@ Structure adapts to density: sparse regions stay shallow, dense regions split in
 
 ## Performance Benchmarks
 
+### Windows (x86_64 AVX-512)
+
 **Environment**: Windows / Go 1.21 / 512-dim vectors
 
-### 32-concurrent (50k vectors, mmap single tree, recommended)
+#### 32-concurrent (50k vectors, mmap single tree, recommended)
 
 Run: `go run ./bench -stage c -offheap`
 
@@ -179,7 +181,7 @@ Run: `go run ./bench -stage c -offheap`
 | 16 | 8,965 | 1.01 | 6.47 | 6.42 |
 | 32 | **10,296** | 1.05 | **11.00** | 10.51 |
 
-### 32-concurrent (50k vectors, 16 shards heap)
+#### 32-concurrent (50k vectors, 16 shards heap)
 
 Run: `go run ./bench -stage c -shards 16 -offheap`
 
@@ -191,7 +193,7 @@ Run: `go run ./bench -stage c -shards 16 -offheap`
 | 16 | 1,439 | 10.88 | 19.22 | 1.77 |
 | 32 | 1,911 | 16.76 | 25.69 | 1.53 |
 
-### Capacity (100k / 200k vectors, mmap)
+#### Capacity (100k / 200k vectors, mmap)
 
 Run: `go run ./bench -stage b`
 
@@ -200,7 +202,7 @@ Run: `go run ./bench -stage b`
 | 100k | ~0 ms | ~0.6 ms | ~700 MB |
 | 200k | ~0.5 ms | ~1.6 ms | ~2.8 GB |
 
-### CGO vs no CGO
+#### CGO vs no CGO
 
 Without CGO: pure Go dot product and heap memory. With CGO: AVX-512 and off-heap. (50k vectors, 16 shards)
 
@@ -214,7 +216,7 @@ Without CGO: pure Go dot product and heap memory. With CGO: AVX-512 and off-heap
 
 CGO yields ~1.9× QPS and lower P50/P99. Without CGO it still builds and runs, suitable when GCC is unavailable or for cross-compilation.
 
-### Heap vs mmap persist (stage d)
+#### Heap vs mmap persist (stage d)
 
 Run: `go run ./bench -stage d`
 
@@ -224,6 +226,54 @@ Run: `go run ./bench -stage d`
 | **mmap persist** | **~7,100** | **~1.2 ms** | **~8 ms** | **~4×** |
 
 mmap stores blocks contiguously in the file; sequential access improves CPU prefetch and cache locality over heap-scattered blocks. Use `NewTreeFromFile` or `cfg.PersistPath` for serving.
+
+---
+
+### Mac (Apple Silicon ARM64 NEON)
+
+**Environment**: macOS / Go 1.21 / 512-dim vectors (Apple Silicon)
+
+#### 32-concurrent (50k vectors, mmap single tree, recommended)
+
+Run: `go run ./bench -stage c -offheap`
+
+| Concurrency | QPS | P50(ms) | P99(ms) | P99/P50 |
+|-------------|-----|---------|---------|---------|
+| 1 | 1,965 | 0.47 | 1.23 | 2.59 |
+| 4 | 4,316 | 0.83 | 2.14 | 2.57 |
+| 8 | 5,831 | 1.14 | 4.05 | 3.55 |
+| 16 | 5,985 | 1.40 | 15.97 | 11.42 |
+| 32 | **6,069** | 2.52 | **19.96** | 7.91 |
+
+#### 32-concurrent (50k vectors, 16 shards heap)
+
+Run: `go run ./bench -stage c -shards 16 -offheap`
+
+| Concurrency | QPS | P50(ms) | P99(ms) | P99/P50 |
+|-------------|-----|---------|---------|---------|
+| 1 | 819 | 1.15 | 2.02 | 1.76 |
+| 4 | 942 | 4.08 | 6.99 | 1.71 |
+| 8 | 976 | 8.01 | 13.48 | 1.68 |
+| 16 | 924 | 16.51 | 36.86 | 2.23 |
+| 32 | 1,040 | 30.36 | 50.98 | 1.68 |
+
+#### Capacity (100k / 200k vectors, mmap)
+
+Run: `go run ./bench -stage b`
+
+| Scale | Search P50 | Search P99 | HeapSys |
+|-------|-------------|-------------|---------|
+| 100k | ~0.2 ms | ~0.3 ms | ~1.4 GB |
+| 200k | ~1.3 ms | ~2.5 ms | ~2.8 GB |
+
+#### Heap vs mmap persist (stage d)
+
+Run: `go run ./bench -stage d`
+
+| Mode | QPS | P50 | P99 | Ratio |
+|------|-----|-----|-----|-------|
+| Heap | ~1,015 | ~11.5 ms | ~67 ms | baseline |
+| **mmap persist** | **~5,114** | **~1.5 ms** | **~21 ms** | **~5×** |
 
 ---
 
@@ -265,6 +315,18 @@ CGO_ENABLED=0 go build -o bench ./bench
 # Benchmark (stage: a|b|c|d)
 ./bench -stage c -shards 16 -offheap
 ./bench -stage d   # Compare mmap vs heap search performance
+```
+
+**macOS (Apple Silicon)**
+
+```bash
+# With CGO (ARM64 NEON acceleration)
+CGO_ENABLED=1 go build -o bench ./bench
+
+# Benchmark (stage: a|b|c|d)
+./bench -stage c -offheap     # mmap single tree
+./bench -stage c -shards 16 -offheap
+./bench -stage d
 ```
 
 ---
