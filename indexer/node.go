@@ -90,16 +90,35 @@ type SearchResult struct {
 }
 
 // scanAndTopK 扫描块内向量，返回 Top-K 的 (chunkID, score)
-func (n *LeafNode) scanAndTopK(query []float32, k int) []SearchResult {
+func (n *LeafNode) scanAndTopK(query []float32, k int, bufs *workerBufs) []SearchResult {
 	if n.vectorCount == 0 {
 		return nil
 	}
 	vpb := n.cfg.VectorsPerBlock
-	scores := make([]float64, n.vectorCount)
+	var scores []float64
+	var indices []int
+	if bufs != nil {
+		if cap(bufs.scores) < n.vectorCount {
+			bufs.scores = make([]float64, n.vectorCount)
+		}
+		scores = bufs.scores[:n.vectorCount]
+		if cap(bufs.indices) < n.vectorCount {
+			bufs.indices = make([]int, n.vectorCount)
+		}
+		indices = bufs.indices[:n.vectorCount]
+	} else {
+		scores = make([]float64, n.vectorCount)
+		indices = make([]int, n.vectorCount)
+	}
 	offset := 0
 	for bi, b := range n.blocks {
 		if bi+1 < len(n.blocks) {
 			if d := n.blocks[bi+1].Data(); len(d) > 0 {
+				_ = d[0]
+			}
+		}
+		if bi+2 < len(n.blocks) {
+			if d := n.blocks[bi+2].Data(); len(d) > 0 {
 				_ = d[0]
 			}
 		}
@@ -111,7 +130,54 @@ func (n *LeafNode) scanAndTopK(query []float32, k int) []SearchResult {
 		copy(scores[offset:], batch)
 		offset += nInBlock
 	}
-	return topKFromScores(n.ids, scores, k)
+	return topKFromScores(n.ids, scores, k, indices)
+}
+
+// scanAndTopKBatch scans blocks once, computes dot products for all queries, returns one []SearchResult per query.
+func (n *LeafNode) scanAndTopKBatch(queries [][]float32, k int, bufs *workerBufs) [][]SearchResult {
+	if n.vectorCount == 0 || len(queries) == 0 {
+		return nil
+	}
+	bufs.ensureBatch(len(queries))
+	vpb := n.cfg.VectorsPerBlock
+	// Ensure each batch score/indices has enough capacity
+	for i := 0; i < len(queries); i++ {
+		if cap(bufs.batchScores[i]) < n.vectorCount {
+			bufs.batchScores[i] = make([]float64, n.vectorCount)
+		}
+		bufs.batchScores[i] = bufs.batchScores[i][:n.vectorCount]
+		if cap(bufs.batchIndices[i]) < n.vectorCount {
+			bufs.batchIndices[i] = make([]int, n.vectorCount)
+		}
+		bufs.batchIndices[i] = bufs.batchIndices[i][:n.vectorCount]
+	}
+	offset := 0
+	for bi, b := range n.blocks {
+		if bi+1 < len(n.blocks) {
+			if d := n.blocks[bi+1].Data(); len(d) > 0 {
+				_ = d[0]
+			}
+		}
+		if bi+2 < len(n.blocks) {
+			if d := n.blocks[bi+2].Data(); len(d) > 0 {
+				_ = d[0]
+			}
+		}
+		nInBlock := vpb
+		if offset+nInBlock > n.vectorCount {
+			nInBlock = n.vectorCount - offset
+		}
+		for q, query := range queries {
+			batch := b.DotProductBatch(query, nInBlock)
+			copy(bufs.batchScores[q][offset:], batch)
+		}
+		offset += nInBlock
+	}
+	out := make([][]SearchResult, len(queries))
+	for q := range queries {
+		out[q] = topKFromScores(n.ids, bufs.batchScores[q], k, bufs.batchIndices[q])
+	}
+	return out
 }
 
 // InternalNode is an internal node with 2~N children and centroid list.
@@ -186,14 +252,17 @@ func (n *InternalNode) ChildSlot(i int) *atomic.Pointer[Node] {
 	return &n.children[i]
 }
 
-func topKFromScores(ids []uint64, scores []float64, k int) []SearchResult {
+func topKFromScores(ids []uint64, scores []float64, k int, indices []int) []SearchResult {
 	if len(ids) != len(scores) || k <= 0 {
 		return nil
 	}
 	if k > len(ids) {
 		k = len(ids)
 	}
-	indices := make([]int, len(ids))
+	if indices == nil || len(indices) < len(ids) {
+		indices = make([]int, len(ids))
+	}
+	indices = indices[:len(ids)]
 	for i := range indices {
 		indices[i] = i
 	}

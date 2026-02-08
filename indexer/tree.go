@@ -148,7 +148,7 @@ func (t *Tree) Search(query []float32, k int) []SearchResult {
 
 func (t *Tree) searchNode(n Node, query []float32, k int) []SearchResult {
 	if n.IsLeaf() {
-		return n.(*LeafNode).scanAndTopK(query, k)
+		return n.(*LeafNode).scanAndTopK(query, k, nil)
 	}
 	internal := n.(*InternalNode)
 	idx := internal.BestChild(query)

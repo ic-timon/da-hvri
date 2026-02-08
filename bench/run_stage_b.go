@@ -16,6 +16,11 @@ type indexerSearcher interface {
 	SearchMultiPath(query []float32, k int) []indexer.SearchResult
 }
 
+type batchSearcher interface {
+	indexerSearcher
+	SearchMultiPathBatch(queries [][]float32, k int) [][]indexer.SearchResult
+}
+
 func runStageB(opts stageOpts) {
 	const dim = 512
 	const searchRuns = 100

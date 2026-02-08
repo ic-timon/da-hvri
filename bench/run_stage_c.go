@@ -35,7 +35,7 @@ func runStageC(opts stageOpts) {
 	} else {
 		idx = indexer.NewTree(cfg)
 	}
-	fmt.Printf("阶段 C: 构建 %d 向量索引 shards=%d offheap=%v mmap=%v...\n", vectorCount, opts.shards, opts.offheap, useMmap)
+	fmt.Printf("阶段 C: 构建 %d 向量索引 shards=%d offheap=%v mmap=%v batch=%d...\n", vectorCount, opts.shards, opts.offheap, useMmap, opts.batch)
 	t0 := time.Now()
 	for i, v := range vecs {
 		if !idx.Add(v, uint64(i)) {
@@ -63,25 +63,57 @@ func runStageC(opts stageOpts) {
 		}()
 	}
 
+	batchSize := opts.batch
+	if batchSize <= 0 {
+		batchSize = 1
+	}
+
 	var rows []metrics.StageCRow
 	for _, concurrency := range concurrencies {
-		fmt.Printf("阶段 C: 并发数 %d\n", concurrency)
+		fmt.Printf("阶段 C: 并发数 %d batch=%d\n", concurrency, batchSize)
 
 		var wg sync.WaitGroup
 		durations := make([]time.Duration, totalRequests)
 		reqPerWorker := totalRequests / concurrency
 		start := time.Now()
-		for c := 0; c < concurrency; c++ {
-			wg.Add(1)
-			go func(worker int) {
-				defer wg.Done()
-				base := worker * reqPerWorker
-				for i := 0; i < reqPerWorker && base+i < totalRequests; i++ {
-					t1 := time.Now()
-					idx.SearchMultiPath(queries[base+i], topK)
-					durations[base+i] = time.Since(t1)
-				}
-			}(c)
+		if batchSize > 1 {
+			bidx, ok := idx.(batchSearcher)
+			if !ok {
+				panic("batch mode requires Tree or ShardedIndex")
+			}
+			for c := 0; c < concurrency; c++ {
+				wg.Add(1)
+				go func(worker int) {
+					defer wg.Done()
+					base := worker * reqPerWorker
+					for i := 0; i < reqPerWorker && base+i < totalRequests; i += batchSize {
+						t1 := time.Now()
+						end := base + i + batchSize
+						if end > totalRequests {
+							end = totalRequests
+						}
+						batch := queries[base+i : end]
+						_ = bidx.SearchMultiPathBatch(batch, topK)
+						elapsed := time.Since(t1)
+						for j := base + i; j < end && j < totalRequests; j++ {
+							durations[j] = elapsed
+						}
+					}
+				}(c)
+			}
+		} else {
+			for c := 0; c < concurrency; c++ {
+				wg.Add(1)
+				go func(worker int) {
+					defer wg.Done()
+					base := worker * reqPerWorker
+					for i := 0; i < reqPerWorker && base+i < totalRequests; i++ {
+						t1 := time.Now()
+						idx.SearchMultiPath(queries[base+i], topK)
+						durations[base+i] = time.Since(t1)
+					}
+				}(c)
+			}
 		}
 		wg.Wait()
 		elapsed := time.Since(start).Seconds()

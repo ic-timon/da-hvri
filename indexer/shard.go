@@ -5,10 +5,6 @@ import (
 	"sync"
 )
 
-var seenPool = sync.Pool{
-	New: func() interface{} { return make(map[uint64]float64) },
-}
-
 // ShardedIndex shards vectors across multiple Trees; search queries all shards in parallel and merges results.
 type ShardedIndex struct {
 	shards  []*Tree
@@ -43,6 +39,36 @@ func (s *ShardedIndex) Add(vec []float32, chunkID uint64) bool {
 	return s.shards[idx].Add(vec, chunkID)
 }
 
+// SearchMultiPathBatch runs batch search across all shards in parallel.
+func (s *ShardedIndex) SearchMultiPathBatch(queries [][]float32, k int) [][]SearchResult {
+	if len(queries) == 0 || k <= 0 {
+		return nil
+	}
+	shardResults := make([][][]SearchResult, s.nShards)
+	var wg sync.WaitGroup
+	wg.Add(s.nShards)
+	for i, shard := range s.shards {
+		idx, sh := i, shard
+		go func() {
+			defer wg.Done()
+			shardResults[idx] = sh.SearchMultiPathBatch(queries, k)
+		}()
+	}
+	wg.Wait()
+	seen := make(seenSlice, 0, seenBufCap)
+	out := make([][]SearchResult, len(queries))
+	for q := range queries {
+		seen = seen[:0]
+		for sh := 0; sh < s.nShards; sh++ {
+			for _, r := range shardResults[sh][q] {
+				(&seen).upsert(r.ChunkID, r.Score)
+			}
+		}
+		out[q] = topKFromSeen(seen, k)
+	}
+	return out
+}
+
 // SearchMultiPath queries all shards in parallel and merges Top-K results.
 func (s *ShardedIndex) SearchMultiPath(query []float32, k int) []SearchResult {
 	if len(query) != BlockDim || k <= 0 {
@@ -55,16 +81,10 @@ func (s *ShardedIndex) SearchMultiPath(query []float32, k int) []SearchResult {
 		s.pool.Submit(searchJob{i, query, shard, k, results, &wg})
 	}
 	wg.Wait()
-	seen := seenPool.Get().(map[uint64]float64)
-	defer func() {
-		clear(seen)
-		seenPool.Put(seen)
-	}()
+	seen := make(seenSlice, 0, seenBufCap)
 	for _, rs := range results {
 		for _, r := range rs {
-			if existing, ok := seen[r.ChunkID]; !ok || r.Score > existing {
-				seen[r.ChunkID] = r.Score
-			}
+			(&seen).upsert(r.ChunkID, r.Score)
 		}
 	}
 	return topKFromSeen(seen, k)

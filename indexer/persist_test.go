@@ -35,6 +35,38 @@ func randomVectors(n int, seed int64) [][]float32 {
 	return out
 }
 
+func TestSearchMultiPathBatch(t *testing.T) {
+	cfg := DefaultConfig()
+	vecs := randomVectors(100, 42)
+	tree := NewTree(cfg)
+	for i, v := range vecs {
+		tree.Add(v, uint64(i))
+	}
+	queries := [][]float32{vecs[0], vecs[10], vecs[50]}
+	batchResults := tree.SearchMultiPathBatch(queries, 5)
+	if len(batchResults) != len(queries) {
+		t.Fatalf("batch results count: got %d want %d", len(batchResults), len(queries))
+	}
+	for i, q := range queries {
+		single := tree.SearchMultiPath(q, 5)
+		if len(batchResults[i]) != len(single) {
+			t.Errorf("query %d: batch len=%d single len=%d", i, len(batchResults[i]), len(single))
+		}
+		for j := 0; j < len(batchResults[i]) && j < len(single); j++ {
+			if batchResults[i][j].ChunkID != single[j].ChunkID {
+				t.Errorf("query %d result[%d]: batch ChunkID=%d single=%d", i, j, batchResults[i][j].ChunkID, single[j].ChunkID)
+			}
+			diff := batchResults[i][j].Score - single[j].Score
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > 1e-5 {
+				t.Errorf("query %d result[%d]: batch Score=%g single=%g", i, j, batchResults[i][j].Score, single[j].Score)
+			}
+		}
+	}
+}
+
 func TestPersist_SerializeDeserializeRoundtrip(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.VectorsPerBlock = 64

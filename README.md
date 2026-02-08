@@ -7,7 +7,7 @@
 [![Go 1.21+](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
 [![AVX-512](https://img.shields.io/badge/AVX--512-Accelerated-green)]()
 [![QPS](https://img.shields.io/badge/mmap_32concurrent_QPS-10k+-green)]()
-[![P99](https://img.shields.io/badge/mmap_32concurrent_P99-11ms-blue)]()
+[![Batch](https://img.shields.io/badge/batch8_QPS-15k+-orange)]()
 [![mmap](https://img.shields.io/badge/mmap_persist-QPS_4x+-orange)]()
 
 ---
@@ -24,9 +24,9 @@ DA-HVRI addresses these with systematic optimizations. At **50k vectors, 32 conc
 
 | Metric | Value |
 |--------|-------|
-| **QPS** | **10,296** (mmap single tree, 32 concurrent, 10k+) |
-| **P99 latency** | **11.00 ms** (mmap single tree, 32 concurrent) |
-| **P99/P50** | **10.51** (single-tree Search Pool + segmented prefetch) |
+| **QPS** | **~9–11k** (mmap single tree, 32 concurrent, batch=1) |
+| **Batch QPS** | **~12–15k** (batch=8, one leaf scan serves multiple queries) |
+| **P99 latency** | **~8–18 ms** (batch=1) / **~27–35 ms** (batch=8) |
 | **Goroutine count** | **25** (Search Pool workers, stable) |
 | **mmap persist** | **~4× search QPS vs heap** (contiguous blocks, cache-friendly) |
 
@@ -57,7 +57,7 @@ DA-HVRI competes with **PQ (Product Quantization)** and **HNSW (Hierarchical Nav
 | **Data adaptivity** | Structure evolves with density | Fixed codebook, retrain on distribution shift | Fixed graph, sensitive to distribution |
 | **Memory** | Raw vectors + centroids (tunable) | Very low (compressed codes) | Higher (graph + vectors) |
 | **Query path** | Tree routing + leaf scan | Table lookup + residual | Graph traversal (multi-hop) |
-| **Concurrent P99** | **11.00 ms** (mmap single-tree Search Pool + segmented prefetch) | Affected by locks/scheduling | Non-deterministic traversal, common tail |
+| **Concurrent P99** | **~8–18 ms** (mmap single-tree Search Pool + segmented prefetch) | Affected by locks/scheduling | Non-deterministic traversal, common tail |
 | **Go ecosystem** | Pure Go + optional CGO | Mostly C++/Python bindings | Mostly C++/Rust bindings |
 | **Embedded** | Single binary, no external deps | Needs pretrained codebook | Needs graph structure |
 
@@ -148,7 +148,7 @@ Structure adapts to density: sparse regions stay shallow, dense regions split in
 ### Low GC impact
 
 - **Off-heap** (C.malloc) for vector blocks; HeapSys reduced ~60%
-- `sync.Pool` reuse for seen map; no allocation on P99 path
+- **Per-worker buffer reuse**: each Search Pool worker holds scores/indices/seen buffers; no allocation on P99 path
 
 ### High-concurrency determinism
 
@@ -159,7 +159,13 @@ Structure adapts to density: sparse regions stay shallow, dense regions split in
 ### Single-tree Search Pool (mmap throttling)
 
 - **SearchPoolWorkers**: Under high concurrency on mmap single tree, 32 goroutines hitting the same tree spike P99. Set `SearchPoolWorkers > 0` (recommended `NumCPU`) to enable a dedicated worker pool that caps concurrency, lowering P99/P50 and boosting QPS
-- **Segmented prefetch**: Leaf scan changed from "prefetch all blocks at once" to "prefetch next block while processing current", reducing cache pollution
+- **Segmented prefetch**: Leaf scan changed from "prefetch all blocks at once" to "prefetch next block while processing current"; SIMD prefetch distance tuned (i+2), reducing cache pollution
+
+### Batch search (SearchMultiPathBatch)
+
+- **One leaf scan serves multiple queries**: Each block is read once and dot products are computed for all queries, improving memory bandwidth utilization
+- **~30–60% QPS improvement**: At batch=8, 32-concurrent QPS reaches 12–15k
+- Benchmark: `.\bench.exe -stage c -batch 8`
 
 ---
 
@@ -171,15 +177,29 @@ Structure adapts to density: sparse regions stay shallow, dense regions split in
 
 #### 32-concurrent (50k vectors, mmap single tree, recommended)
 
-Run: `go run ./bench -stage c -offheap`
+Run: `.\bench.exe -stage c` (typical values from 6 consecutive runs)
 
 | Concurrency | QPS | P50(ms) | P99(ms) | P99/P50 |
 |-------------|-----|---------|---------|---------|
-| 1 | 1,706 | 0.52 | 2.00 | 3.82 |
-| 4 | 4,194 | 1.00 | 2.72 | 2.71 |
-| 8 | 7,078 | 1.00 | 3.19 | 3.19 |
-| 16 | 8,965 | 1.01 | 6.47 | 6.42 |
-| 32 | **10,296** | 1.05 | **11.00** | 10.51 |
+| 1 | ~1,500 | 0.52 | 2.00 | 3.8 |
+| 4 | ~3,500 | 1.05 | 3.00 | 2.8 |
+| 8 | ~5,500 | 1.10 | 4.50 | 4.0 |
+| 16 | ~8,800 | 1.05 | 7.00 | 6.5 |
+| 32 | **~9,500** | 1.5 | **~14** | 8 |
+
+#### 32-concurrent (50k vectors, mmap single tree, batch=8)
+
+Run: `.\bench.exe -stage c -batch 8` (typical values from 6 consecutive runs)
+
+| Concurrency | QPS | P50(ms) | P99(ms) | P99/P50 |
+|-------------|-----|---------|---------|---------|
+| 1 | ~2,100 | 3.5 | 9 | 2.5 |
+| 4 | ~5,000 | 6 | 9 | 1.5 |
+| 8 | ~7,800 | 7 | 12 | 1.7 |
+| 16 | ~12,000 | 7 | 21 | 3.0 |
+| 32 | **~13,500** | 8 | **~29** | 3.5 |
+
+With batch=8, one leaf scan serves 8 queries; QPS improves ~30–50%, suitable for batchable online scenarios.
 
 #### 32-concurrent (50k vectors, 16 shards heap)
 
@@ -299,6 +319,8 @@ $env:CGO_ENABLED = "1"
 go build -o bench.exe ./bench
 
 # Benchmark (stage: a param tune | b capacity | c high concurrency | d heap vs mmap)
+.\bench.exe -stage c
+.\bench.exe -stage c -batch 8   # Batch search mode, higher QPS
 .\bench.exe -stage c -shards 16 -offheap
 .\bench.exe -stage d   # Compare mmap vs heap search performance
 ```
@@ -411,13 +433,17 @@ for i, vec := range vectors {
 |--------|-------------|
 | `Search(query, k)` | Single-path search, lowest latency |
 | `SearchMultiPath(query, k)` | Multi-path search, higher recall |
+| `SearchMultiPathBatch(queries, k)` | Batch multi-path search; one leaf scan serves multiple queries, ~30–60% QPS gain |
 
 ```go
-// queryVec is 512-dim L2-normalized
+// Single-query search
 results := idx.SearchMultiPath(queryVec, 5)
 
-for _, r := range results {
-    fmt.Printf("chunk %d, score %.4f\n", r.ChunkID, r.Score)
+// Batch search (for batchable scenarios)
+batchQueries := [][]float32{vec1, vec2, vec3}
+batchResults := idx.SearchMultiPathBatch(batchQueries, 5)
+for i, rs := range batchResults {
+    fmt.Printf("query %d: %d results\n", i, len(rs))
 }
 ```
 
@@ -498,6 +524,8 @@ mmap is the default load path; blocks are contiguous in the file for better cach
 .
 ├── indexer/          # Index core
 │   ├── tree.go       # Dynamic descending tree
+│   ├── search.go     # Multi-path search + SearchMultiPathBatch
+│   ├── search_bufs.go# Per-worker buffers, seenSlice
 │   ├── shard.go      # Sharded index + Worker Pool
 │   ├── persist.go    # SaveToAtomic / LoadFrom / NewTreeFromFile / AppendTo
 │   ├── block_mmap.go # mmap blocks (read-only, default for search)

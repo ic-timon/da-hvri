@@ -16,8 +16,8 @@ static float horizontal_sum_m128(__m128 v) {
 void DotProductBatchFlatPrefetchSSE4(const float* query, const float* data, int n, double* results) {
 	const size_t dim = 512;
 	for (int i = 0; i < n; i++) {
-		if (i + 1 < n) {
-			_mm_prefetch((const char*)(data + (i + 1) * dim), _MM_HINT_T0);
+		if (i + 2 < n) {
+			_mm_prefetch((const char*)(data + (i + 2) * dim), _MM_HINT_T0);
 		}
 		__m128 sum = _mm_setzero_ps();
 		size_t j = 0;

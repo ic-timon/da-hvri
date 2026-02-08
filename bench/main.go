@@ -10,14 +10,17 @@ import (
 type stageOpts struct {
 	shards  int
 	offheap bool
+	batch   int
 }
 
 func main() {
 	stage := flag.String("stage", "", "压测阶段: a(参数寻优) | b(容量扩展) | c(高并发) | d(内存vs mmap)")
 	shards := flag.Int("shards", 1, "分片数，>1 时使用 ShardedIndex（仅 stage b/c 生效）")
 	offheap := flag.Bool("offheap", false, "启用 Off-heap 内存（需 CGO）")
+	batch := flag.Int("batch", 0, "批量查询大小，>1 时使用 SearchMultiPathBatch（仅 stage c 生效）")
 	flag.Parse()
 	stageOpts := stageOpts{shards: *shards, offheap: *offheap}
+	stageOpts.batch = *batch
 	switch *stage {
 	case "a":
 		runStageA()

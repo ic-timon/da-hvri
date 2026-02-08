@@ -37,8 +37,10 @@ func newSingleTreeSearchPool(tree *Tree, nWorkers, bufSize int) *singleTreeSearc
 
 func (p *singleTreeSearchPool) worker() {
 	defer p.wg.Done()
+	bufs := newWorkerBufs()
 	for job := range p.jobs {
-		job.result = p.tree.searchMultiPathImpl(job.query, job.k)
+		job.result = p.tree.searchMultiPathImpl(job.query, job.k, bufs)
+		bufs.reset()
 		job.wg.Done()
 	}
 }
