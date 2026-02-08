@@ -4,11 +4,33 @@
 
 > **Density-Adaptive Hierarchical Vector Routing Index** — An embedded vector search engine for Go, combining design principles from Milvus, FAISS, and Elasticsearch, optimized for single-machine high-concurrency scenarios.
 
+**50k vectors / 32 concurrent, P99 under 15ms | Single-machine RAG vector search, pure Go, no GPU, no external deps**
+
 [![Go 1.21+](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://go.dev/)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ic-timon/da-hvri)](https://goreportcard.com/report/github.com/ic-timon/da-hvri)
+[![License](https://img.shields.io/github/license/ic-timon/da-hvri)](LICENSE)
 [![AVX-512](https://img.shields.io/badge/AVX--512-Accelerated-green)]()
 [![QPS](https://img.shields.io/badge/mmap_32concurrent_QPS-10k+-green)]()
 [![Batch](https://img.shields.io/badge/batch8_QPS-15k+-orange)]()
 [![mmap](https://img.shields.io/badge/mmap_persist-QPS_4x+-orange)]()
+
+---
+
+## Table of Contents
+
+- [Why DA-HVRI?](#why-da-hvri)
+- [30 Second Quick Start](#30-second-quick-start)
+- [Design Inspiration](#design-inspiration)
+- [Comparison with PQ and HNSW](#comparison-with-pq-and-hnsw)
+- [Core Features](#core-features)
+- [Technical Highlights](#technical-highlights)
+- [Performance Benchmarks](#performance-benchmarks)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Project structure](#project-structure)
+- [Config parameters](#config-parameters)
+- [Roadmap](#roadmap)
+- [License](#license)
 
 ---
 
@@ -20,7 +42,20 @@ In RAG, KAG, and multimodal retrieval, **P99 latency** of vector indexes often d
 - **GC tail**: Heap pressure triggers stop-the-world; P99 collapses randomly
 - **Lock contention**: Multiple goroutines compete for the same channel or map; throughput fails to scale linearly
 
-DA-HVRI addresses these with systematic optimizations. At **50k vectors, 32 concurrency**:
+**Generic libs P99 150ms+ vs DA-HVRI ~8–18ms**. DA-HVRI addresses these with systematic optimizations: **9k+ QPS on a single machine**, **mmap persist ≈ 4x heap**, deterministic P99. At **50k vectors, 32 concurrency**:
+
+```mermaid
+flowchart LR
+    subgraph generic [Generic Libs]
+        G1[P99 150ms+]
+        G2[Goroutine explosion]
+    end
+    subgraph dahvri [DA-HVRI]
+        D1["P99 8-18ms"]
+        D2["QPS 9-15k"]
+    end
+    generic -->|optimized| dahvri
+```
 
 | Metric | Value |
 |--------|-------|
@@ -169,6 +204,16 @@ Structure adapts to density: sparse regions stay shallow, dense regions split in
 
 ---
 
+## Technical Highlights
+
+- **AVX-512**: 16 float32 per step, 512 dims with no remainder, full SIMD dot product
+- **Per-worker buffer reuse**: Zero allocation on P99 path, scores/indices/seen per worker
+- **mmap contiguous blocks**: Cache-friendly, ~4x search QPS vs heap
+- **Lock-free read path**: Tree nodes use `atomic.Pointer`, split is atomic replace
+- **Density-adaptive tree**: Structure evolves with data density, no pre-specified cluster count
+
+---
+
 ## Performance Benchmarks
 
 ### Windows (x86_64 AVX-512)
@@ -294,6 +339,39 @@ Run: `go run ./bench -stage d`
 |------|-----|-----|-----|-------|
 | Heap | ~1,015 | ~11.5 ms | ~67 ms | baseline |
 | **mmap persist** | **~5,114** | **~1.5 ms** | **~21 ms** | **~5×** |
+
+---
+
+## 30 Second Quick Start
+
+```go
+package main
+
+import (
+	"fmt"
+	"github.com/ic-timon/da-hvri/indexer"
+)
+
+func main() {
+	cfg := indexer.DefaultConfig()
+	idx := indexer.NewTree(cfg)
+	vec := make([]float32, 512)
+	vec[0] = 1.0 // simplified; use L2-normalized vectors in production
+	idx.Add(vec, 0)
+	idx.Add(vec, 1)
+	results := idx.SearchMultiPath(vec, 2)
+	for _, r := range results {
+		fmt.Printf("chunk %d, score %.4f\n", r.ChunkID, r.Score)
+	}
+}
+```
+
+```bash
+go get github.com/ic-timon/da-hvri
+go run main.go
+```
+
+Run benchmark: `.\bench.exe -stage c` for QPS, P50, P99.
 
 ---
 
@@ -548,6 +626,12 @@ mmap is the default load path; blocks are contiguous in the file for better cach
 | UseOffheap | false | Enable C.malloc |
 | PersistPath | "" | Serving load path; NewTree auto mmap |
 | SearchPoolWorkers | 0 | Single-tree search pool workers; enabled when >0 (mmap throttling) |
+
+---
+
+## Roadmap
+
+- **Go 1.26 SIMD migration**: Go plans to add standard library SIMD support in 1.26. The project will evaluate migrating the CGO/SIMD implementation to the official API once released, reducing CGO dependency and simplifying build/cross-compilation. Existing AVX-512/AVX2/SSE4/NEON implementations will remain for backward compatibility until migration.
 
 ---
 
